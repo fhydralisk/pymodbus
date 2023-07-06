@@ -14,9 +14,10 @@ class CommHeaderType(Enum):
     """Type of Modbus header"""
 
     SOCKET = 1
-    RTU = 2
-    ASCII = 3
-    BINARY = 4
+    TLS = 2
+    RTU = 3
+    ASCII = 4
+    BINARY = 5
 
 
 class ModbusMessage(ModbusProtocol):
@@ -55,14 +56,13 @@ class ModbusMessage(ModbusProtocol):
             False,
         )
         super().__init__(params, is_server)
-        if headerType == CommHeaderType.SOCKET:
-            self.header: ModbusHeader = HeaderSocket(self)
-        elif headerType == CommHeaderType.RTU:
-            self.header = HeaderRTU(self)
-        elif headerType == CommHeaderType.ASCII:
-            self.header = HeaderASCII(self)
-        elif headerType == CommHeaderType.BINARY:
-            self.header = HeaderBinary(self)
+        self.header: ModbusHeader = {
+            CommHeaderType.SOCKET: HeaderSocket(self),
+            CommHeaderType.TLS: HeaderTLS(self),
+            CommHeaderType.RTU: HeaderRTU(self),
+            CommHeaderType.ASCII: HeaderASCII(self),
+            CommHeaderType.BINARY: HeaderBinary(self),
+        }[headerType]
 
     # --------- #
     # callbacks #
@@ -95,6 +95,14 @@ class ModbusHeader:  # pylint: disable=too-few-public-methods
 
 class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
     """MDAP Header for socket transport"""
+
+    def __init__(self, message):
+        """Initialize"""
+        self.message = message
+
+
+class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
+    """TLS Header for socket transport"""
 
     def __init__(self, message):
         """Initialize"""
