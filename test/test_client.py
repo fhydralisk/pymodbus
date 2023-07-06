@@ -20,7 +20,7 @@ from pymodbus.framer.ascii_framer import ModbusAsciiFramer
 from pymodbus.framer.rtu_framer import ModbusRtuFramer
 from pymodbus.framer.socket_framer import ModbusSocketFramer
 from pymodbus.framer.tls_framer import ModbusTlsFramer
-from pymodbus.transport.transport import NULLMODEM_HOST, CommType
+from pymodbus.transport import NULLMODEM_HOST, CommType
 
 
 BASE_PORT = 6500

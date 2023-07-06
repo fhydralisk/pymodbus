@@ -4,7 +4,7 @@ from unittest import mock
 
 import pytest
 
-from pymodbus.transport.transport import (
+from pymodbus.transport import (
     NULLMODEM_HOST,
     CommType,
     ModbusProtocol,
@@ -31,7 +31,6 @@ class TestBasicModbusProtocol:
         assert not hasattr(client, "active_connections")
         assert not client.is_server
         server.comm_params.sslctx = None
-        assert not hasattr(server, "unique_id")
         assert not server.active_connections
         assert server.is_server
 
@@ -43,7 +42,6 @@ class TestBasicModbusProtocol:
         assert client.unique_id == str(id(client))
         assert not hasattr(client, "active_connections")
         assert not client.is_server
-        assert not hasattr(server, "unique_id")
         assert not server.active_connections
         assert server.is_server
 
@@ -98,18 +96,18 @@ class TestBasicModbusProtocol:
 
     async def test_data_received(self, client):
         """Test data_received."""
+        client.callback_data = mock.MagicMock()
+        client.datagram_received(b"abc", "127.0.0.1")
+        client.callback_data.assert_called_once()
+
+    async def test_datagram(self, client):
+        """Test datagram_received()."""
         client.callback_data = mock.MagicMock(return_value=2)
         client.data_received(b"123456")
         client.callback_data.assert_called_once()
         assert client.recv_buffer == b"3456"
         client.data_received(b"789")
         assert client.recv_buffer == b"56789"
-
-    async def test_datagram(self, client):
-        """Test datagram_received()."""
-        client.callback_data = mock.MagicMock()
-        client.datagram_received(b"abc", "127.0.0.1")
-        client.callback_data.assert_called_once()
 
     async def test_eof_received(self, client):
         """Test eof_received."""
@@ -136,22 +134,26 @@ class TestBasicModbusProtocol:
         client.transport_send(b"abc")
         client.transport_send(b"abc", addr=("localhost", 502))
 
-    async def test_handle_local_echo(self, client):
-        """Test transport_send()."""
+    @pytest.mark.parametrize(
+        ("sent_buffer", "data", "recv_buffer", "new_sent_buffer", "called"),
+        [
+            (b"123", b"abc123def", b"abcdef", b"", 1),
+            (b"123", b"12", b"", b"3", 0),
+            (b"123", b"abcdef", b"abcdef", b"", 1),
+        ],
+    )
+    async def test_handle_local_echo(
+        self, client, sent_buffer, data, recv_buffer, new_sent_buffer, called
+    ):
+        """Test sent_buffer."""
         client.comm_params.handle_local_echo = True
-        client.transport = mock.Mock()
-        test_data = b"abc"
-        client.transport_send(test_data)
-        client.data_received(test_data)
-        assert not client.recv_buffer
-        client.data_received(test_data)
-        assert client.recv_buffer == test_data
-        client.recv_buffer = b""
-        client.transport_send(test_data)
-        client.datagram_received(test_data, ("127.0.0.1", 502))
-        assert not client.recv_buffer
-        client.datagram_received(test_data, ("127.0.0.1", 502))
-        assert client.recv_buffer == test_data
+        client.callback_data = mock.MagicMock(return_value=0)
+        client.transport = mock.MagicMock()
+        client.transport_send(sent_buffer)
+        client.data_received(data)
+        assert client.recv_buffer == recv_buffer
+        assert client.sent_buffer == new_sent_buffer
+        assert client.callback_data.call_count == called
 
     async def test_transport_close(self, server, dummy_protocol):
         """Test transport_close()."""

@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from pymodbus.transport.transport import NULLMODEM_HOST, CommType, ModbusProtocol
+from pymodbus.transport import NULLMODEM_HOST, CommType, ModbusProtocol
 
 
 BASE_PORT = 6100

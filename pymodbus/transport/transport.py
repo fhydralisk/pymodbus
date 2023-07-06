@@ -1,6 +1,8 @@
-"""ModbusProtocol layer."""
-# mypy: disable-error-code="name-defined,union-attr"
-# needed because asyncio.Server is not defined (to mypy) in v3.8.16
+"""ModbusProtocol layer.
+
+The ModbusProtocol layer is handling the actual traffic on the supported transport mediums,
+and provides a unified transport interface.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +41,7 @@ class CommParams:
     port: int = 0
     source_address: tuple[str, int] = ("127.0.0.1", 0)
     handle_local_echo: bool = False
+    new_connection_class: Callable[[], ModbusProtocol] = None
 
     # tls
     sslctx: ssl.SSLContext = None
@@ -124,18 +127,22 @@ class ModbusProtocol(asyncio.BaseProtocol):
         self.is_server = is_server
         self.is_closing = False
 
-        self.transport: asyncio.BaseModbusProtocol | asyncio.Server = None
+        self.transport: asyncio.BaseTransport = None
         self.loop: asyncio.AbstractEventLoop = None
         self.recv_buffer: bytes = b""
         self.call_create: Callable[[], Coroutine[Any, Any, Any]] = lambda: None
+        self.unique_id: str = str(id(self))
         if self.is_server:
             self.active_connections: dict[str, ModbusProtocol] = {}
         else:
             self.listener: ModbusProtocol = None
-            self.unique_id: str = str(id(self))
             self.reconnect_task: asyncio.Task = None
             self.reconnect_delay_current: float = 0.0
             self.sent_buffer: bytes = b""
+        if not self.comm_params.new_connection_class:
+            self.comm_params.new_connection_class = lambda: ModbusProtocol(
+                self.comm_params, False
+            )
 
         # ModbusProtocol specific setup
         if self.comm_params.comm_type == CommType.SERIAL:
@@ -254,7 +261,7 @@ class ModbusProtocol(asyncio.BaseProtocol):
     # ---------------------------------- #
     # ModbusProtocol asyncio standard methods #
     # ---------------------------------- #
-    def connection_made(self, transport: asyncio.BaseModbusProtocol):
+    def connection_made(self, transport: asyncio.BaseTransport):
         """Call from asyncio, when a connection is made.
 
         :param transport: socket etc. representing the connection.
@@ -282,20 +289,20 @@ class ModbusProtocol(asyncio.BaseProtocol):
 
         :param data: non-empty bytes object with incoming data.
         """
-        Log.debug("recv: {}", data, ":hex")
-        if self.comm_params.handle_local_echo and self.sent_buffer == data:
-            self.sent_buffer = b""
-            return
-        self.recv_buffer += data
-        cut = self.callback_data(self.recv_buffer)
-        self.recv_buffer = self.recv_buffer[cut:]
+        self.datagram_received(data, None)
 
     def datagram_received(self, data: bytes, addr: tuple):
         """Receive datagram (UDP connections)."""
         Log.debug("recv: {} addr={}", data, ":hex", addr)
-        if self.comm_params.handle_local_echo and self.sent_buffer == data:
-            self.sent_buffer = b""
-            return
+        if self.comm_params.handle_local_echo and self.sent_buffer:
+            if self.sent_buffer in data:
+                data, self.sent_buffer = data.replace(self.sent_buffer, b"", 1), b""
+            elif self.sent_buffer.startswith(data):
+                self.sent_buffer, data = self.sent_buffer.replace(data, b"", 1), b""
+            else:
+                self.sent_buffer = b""
+            if not data:
+                return
         self.recv_buffer += data
         cut = self.callback_data(self.recv_buffer, addr=addr)
         self.recv_buffer = self.recv_buffer[cut:]
@@ -339,11 +346,11 @@ class ModbusProtocol(asyncio.BaseProtocol):
             self.sent_buffer = data
         if self.comm_params.comm_type == CommType.UDP:
             if addr:
-                self.transport.sendto(data, addr=addr)
+                self.transport.sendto(data, addr=addr)  # type: ignore[attr-defined]
             else:
-                self.transport.sendto(data)
+                self.transport.sendto(data)  # type: ignore[attr-defined]
         else:
-            self.transport.write(data)
+            self.transport.write(data)  # type: ignore[attr-defined]
 
     def transport_close(self, intern: bool = False, reconnect: bool = False) -> None:
         """Close connection.
@@ -416,7 +423,7 @@ class ModbusProtocol(asyncio.BaseProtocol):
             # Clients reuse the same object.
             return self
 
-        new_protocol = ModbusProtocol(self.comm_params, False)
+        new_protocol = self.comm_params.new_connection_class()
         self.active_connections[new_protocol.unique_id] = new_protocol
         new_protocol.listener = self
         return new_protocol
@@ -458,7 +465,7 @@ class ModbusProtocol(asyncio.BaseProtocol):
         return f"{self.__class__.__name__}({self.comm_params.comm_name})"
 
 
-class NullModem(asyncio.DatagramTransport, asyncio.WriteTransport):
+class NullModem(asyncio.DatagramTransport, asyncio.BaseTransport):
     """ModbusProtocol layer.
 
     Contains methods to act as a null modem between 2 objects.
@@ -470,7 +477,7 @@ class NullModem(asyncio.DatagramTransport, asyncio.WriteTransport):
     def __init__(self, protocol: ModbusProtocol):
         """Create half part of null modem"""
         asyncio.DatagramTransport.__init__(self)
-        asyncio.WriteTransport.__init__(self)
+        asyncio.BaseTransport.__init__(self)
         self.other: NullModem = None
         self.protocol = protocol
         self.serving: asyncio.Future = asyncio.Future()

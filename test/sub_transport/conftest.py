@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from pymodbus.transport.transport import (
+from pymodbus.transport import (
     NULLMODEM_HOST,
     CommParams,
     CommType,
