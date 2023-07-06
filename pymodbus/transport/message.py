@@ -17,7 +17,6 @@ class CommHeaderType(Enum):
     TLS = 2
     RTU = 3
     ASCII = 4
-    BINARY = 5
 
 
 class ModbusMessage(ModbusProtocol):
@@ -61,7 +60,6 @@ class ModbusMessage(ModbusProtocol):
             CommHeaderType.TLS: HeaderTLS(self),
             CommHeaderType.RTU: HeaderRTU(self),
             CommHeaderType.ASCII: HeaderASCII(self),
-            CommHeaderType.BINARY: HeaderBinary(self),
         }[headerType]
 
     # --------- #
@@ -94,7 +92,14 @@ class ModbusHeader:  # pylint: disable=too-few-public-methods
 
 
 class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """MDAP Header for socket transport"""
+    """Modbus Socket header.
+
+    [         MBAP Header         ] [ Function Code] [ Data ]
+    [ tid ][ pid ][ length ][ uid ]
+      2b     2b     2b        1b           1b           Nb
+
+    * length = uid + function code + data
+    """
 
     def __init__(self, message):
         """Initialize"""
@@ -102,7 +107,11 @@ class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
 
 
 class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """TLS Header for socket transport"""
+    """Modbus TLS header
+
+    [ Function Code] [ Data ]
+      1b               Nb
+    """
 
     def __init__(self, message):
         """Initialize"""
@@ -110,7 +119,32 @@ class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
 
 
 class HeaderRTU(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """RTU Header for serial/socket transport"""
+    """Modbus RTU Frame controller.
+
+    [ Start Wait ] [Address ][ Function Code] [ Data ][ CRC ][  End Wait  ]
+        3.5 chars     1b         1b               Nb      2b      3.5 chars
+
+    Wait refers to the amount of time required to transmit at least x many
+    characters.  In this case it is 3.5 characters.  Also, if we receive a
+    wait of 1.5 characters at any point, we must trigger an error message.
+    Also, it appears as though this message is little endian. The logic is
+    simplified as the following::
+
+    The following table is a listing of the baud wait times for the specified
+    baud rates::
+
+        ------------------------------------------------------------------
+         Baud  1.5c (18 bits)   3.5c (38 bits)
+        ------------------------------------------------------------------
+         1200   13333.3 us       31666.7 us
+         4800    3333.3 us        7916.7 us
+         9600    1666.7 us        3958.3 us
+        19200     833.3 us        1979.2 us
+        38400     416.7 us         989.6 us
+        ------------------------------------------------------------------
+        1 Byte = start + 8 bits + parity + stop = 11 bits
+        (1/Baud)(bits) = delay seconds
+    """
 
     def __init__(self, message):
         """Initialize"""
@@ -118,15 +152,16 @@ class HeaderRTU(ModbusHeader):  # pylint: disable=too-few-public-methods
 
 
 class HeaderASCII(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """ASCII Header for serial/socket transport"""
+    """Modbus ASCII Frame Controller.
 
-    def __init__(self, message):
-        """Initialize"""
-        self.message = message
+    [ Start ][Address ][ Function ][ Data ][ LRC ][ End ]
+      1c        2c         2c         Nc     2c      2c
 
-
-class HeaderBinary(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """Binary Header for serial/socket transport"""
+    * data can be 0 - 2x252 ASCII chars
+    * end is Carriage and return line feed, however the line feed
+      character can be changed via a special command
+    * start is ":"
+    """
 
     def __init__(self, message):
         """Initialize"""
