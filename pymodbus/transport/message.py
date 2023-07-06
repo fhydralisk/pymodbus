@@ -42,12 +42,16 @@ class ModbusMessage(ModbusProtocol):
         headerType: CommHeaderType,
         params: CommParams,
         is_server: bool,
+        slaves: list[int],
+        function_codes: list[int],
     ) -> None:
         """Initialize a message instance.
 
         :param headerType: Modbus header type
         :param params: parameter dataclass
         :param is_server: true if object act as a server (listen/connect)
+        :param slaves: list of slave id to accept
+        :param function_codes: List of acceptable function codes
         """
         params.new_connection_class = lambda: ModbusMessage(
             headerType,
@@ -61,13 +65,23 @@ class ModbusMessage(ModbusProtocol):
             CommHeaderType.RTU: HeaderRTU(self),
             CommHeaderType.ASCII: HeaderASCII(self),
         }[headerType]
+        self.slaves = slaves
+        self.function_codes = function_codes
+
+    def callback_data(self, data: bytes, addr: tuple = None) -> int:
+        """Handle call from transport with data."""
+        if len(data) < self.header.min_len:
+            return 0
+
+        # add generic handling
+        return 0
 
     # --------- #
     # callbacks #
     # --------- #
-    def callback_data(self, data: bytes, addr: tuple = None) -> int:
+    def callback_message(self, data: bytes) -> None:
         """Handle received data."""
-        Log.debug("callback_data called: {} addr={}", data, ":hex", addr)
+        Log.debug("callback_message called: {}", data, ":hex")
         return 0
 
     # ----------------------------------- #
@@ -101,6 +115,8 @@ class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
     * length = uid + function code + data
     """
 
+    min_len: int = 8
+
     def __init__(self, message):
         """Initialize"""
         self.message = message
@@ -112,6 +128,8 @@ class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
     [ Function Code] [ Data ]
       1b               Nb
     """
+
+    min_len: int = 1
 
     def __init__(self, message):
         """Initialize"""
@@ -134,17 +152,22 @@ class HeaderRTU(ModbusHeader):  # pylint: disable=too-few-public-methods
     baud rates::
 
         ------------------------------------------------------------------
-         Baud  1.5c (18 bits)   3.5c (38 bits)
+           Baud  1.5c (18 bits)   3.5c (38 bits)
         ------------------------------------------------------------------
-         1200   13333.3 us       31666.7 us
-         4800    3333.3 us        7916.7 us
-         9600    1666.7 us        3958.3 us
-        19200     833.3 us        1979.2 us
-        38400     416.7 us         989.6 us
+           1200  15,000 ms        31,667 ms
+           4800   3,750 ms         7,917 ms
+           9600   1,875 ms         3,958 ms
+          19200   0,938 ms         1,979 ms
+          38400   0,469 ms         0,989 ms
+         115200   0,156 ms         0,329 ms
         ------------------------------------------------------------------
-        1 Byte = start + 8 bits + parity + stop = 11 bits
-        (1/Baud)(bits) = delay seconds
+        1 Byte = 8 bits + 1 bit parity + 2 stop bit = 11 bits
+
+    * Note: due to the USB converter and the OS drivers, timing cannot be quaranteed
+    neither when receiving nor when sending.
     """
+
+    min_len: int = 4
 
     def __init__(self, message):
         """Initialize"""
@@ -162,6 +185,8 @@ class HeaderASCII(ModbusHeader):  # pylint: disable=too-few-public-methods
       character can be changed via a special command
     * start is ":"
     """
+
+    min_len: int = 9
 
     def __init__(self, message):
         """Initialize"""
