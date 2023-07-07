@@ -10,7 +10,7 @@ from pymodbus.logging import Log
 from pymodbus.transport.transport import CommParams, ModbusProtocol
 
 
-class CommHeaderType(Enum):
+class CommFrameType(Enum):
     """Type of Modbus header"""
 
     SOCKET = 1
@@ -39,7 +39,7 @@ class ModbusMessage(ModbusProtocol):
 
     def __init__(
         self,
-        headerType: CommHeaderType,
+        frameType: CommFrameType,
         params: CommParams,
         is_server: bool,
         slaves: list[int],
@@ -47,30 +47,32 @@ class ModbusMessage(ModbusProtocol):
     ) -> None:
         """Initialize a message instance.
 
-        :param headerType: Modbus header type
+        :param frameType: Modbus frame type
         :param params: parameter dataclass
         :param is_server: true if object act as a server (listen/connect)
         :param slaves: list of slave id to accept
         :param function_codes: List of acceptable function codes
         """
+        self.slaves = slaves
+        self.framerType: ModbusFrameType = {
+            CommFrameType.SOCKET: FrameTypeSocket(self),
+            CommFrameType.TLS: FrameTypeTLS(self),
+            CommFrameType.RTU: FrameTypeRTU(self),
+            CommFrameType.ASCII: FrameTypeASCII(self),
+        }[frameType]
+        self.function_codes = function_codes
         params.new_connection_class = lambda: ModbusMessage(
-            headerType,
+            frameType,
             self.comm_params,
             False,
+            self.slaves,
+            self.function_codes,
         )
         super().__init__(params, is_server)
-        self.header: ModbusHeader = {
-            CommHeaderType.SOCKET: HeaderSocket(self),
-            CommHeaderType.TLS: HeaderTLS(self),
-            CommHeaderType.RTU: HeaderRTU(self),
-            CommHeaderType.ASCII: HeaderASCII(self),
-        }[headerType]
-        self.slaves = slaves
-        self.function_codes = function_codes
 
     def callback_data(self, data: bytes, addr: tuple = None) -> int:
         """Handle call from transport with data."""
-        if len(data) < self.header.min_len:
+        if len(data) < self.framerType.min_len:
             return 0
 
         # add generic handling
@@ -82,7 +84,6 @@ class ModbusMessage(ModbusProtocol):
     def callback_message(self, data: bytes) -> None:
         """Handle received data."""
         Log.debug("callback_message called: {}", data, ":hex")
-        return 0
 
     # ----------------------------------- #
     # Helper methods for external classes #
@@ -101,12 +102,14 @@ class ModbusMessage(ModbusProtocol):
     # ---------------- #
 
 
-class ModbusHeader:  # pylint: disable=too-few-public-methods
+class ModbusFrameType:  # pylint: disable=too-few-public-methods
     """Generic header"""
 
+    min_len: int = 0
 
-class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """Modbus Socket header.
+
+class FrameTypeSocket(ModbusFrameType):  # pylint: disable=too-few-public-methods
+    """Modbus Socket frame type.
 
     [         MBAP Header         ] [ Function Code] [ Data ]
     [ tid ][ pid ][ length ][ uid ]
@@ -122,8 +125,8 @@ class HeaderSocket(ModbusHeader):  # pylint: disable=too-few-public-methods
         self.message = message
 
 
-class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """Modbus TLS header
+class FrameTypeTLS(ModbusFrameType):  # pylint: disable=too-few-public-methods
+    """Modbus TLS frame type
 
     [ Function Code] [ Data ]
       1b               Nb
@@ -136,8 +139,8 @@ class HeaderTLS(ModbusHeader):  # pylint: disable=too-few-public-methods
         self.message = message
 
 
-class HeaderRTU(ModbusHeader):  # pylint: disable=too-few-public-methods
-    """Modbus RTU Frame controller.
+class FrameTypeRTU(ModbusFrameType):  # pylint: disable=too-few-public-methods
+    """Modbus RTU frame type.
 
     [ Start Wait ] [Address ][ Function Code] [ Data ][ CRC ][  End Wait  ]
         3.5 chars     1b         1b               Nb      2b      3.5 chars
@@ -174,7 +177,7 @@ class HeaderRTU(ModbusHeader):  # pylint: disable=too-few-public-methods
         self.message = message
 
 
-class HeaderASCII(ModbusHeader):  # pylint: disable=too-few-public-methods
+class FrameTypeASCII(ModbusFrameType):  # pylint: disable=too-few-public-methods
     """Modbus ASCII Frame Controller.
 
     [ Start ][Address ][ Function ][ Data ][ LRC ][ End ]

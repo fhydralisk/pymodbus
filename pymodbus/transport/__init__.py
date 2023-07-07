@@ -7,10 +7,10 @@ __all__ = [
     "NullModem",
     "NULLMODEM_HOST",
     "ModbusMessage",
-    "CommHeaderType",
+    "CommFrameType",
 ]
 
-from pymodbus.transport.message import CommHeaderType, ModbusMessage
+from pymodbus.transport.message import CommFrameType, ModbusMessage
 from pymodbus.transport.transport import (
     NULLMODEM_HOST,
     CommParams,
